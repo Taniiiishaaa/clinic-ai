@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import Vapi from '@vapi-ai/web';
+import { useEffect, useRef, useState } from 'react';
 
 type Provider = {
   id: string;
@@ -25,12 +24,9 @@ export default function Home() {
   const [reason, setReason] = useState('');
 
   const [callStatus, setCallStatus] = useState('Idle');
+  const [voiceReady, setVoiceReady] = useState(false);
 
-  const vapi = useMemo(() => {
-    const key = process.env.NEXT_PUBLIC_VAPI_API_KEY;
-    if (!key) return null;
-    return new Vapi(key);
-  }, []);
+  const vapiRef = useRef<any>(null);
 
   useEffect(() => {
     fetch('/api/providers')
@@ -62,60 +58,78 @@ export default function Home() {
   }, [selectedProvider]);
 
   useEffect(() => {
-    if (!vapi) return;
+    let mounted = true;
 
-    const onCallStart = () => {
-      console.log('Vapi call started');
-      setCallStatus('Call started');
+    const initVapi = async () => {
+      try {
+        const key = process.env.NEXT_PUBLIC_VAPI_API_KEY;
+
+        if (!key) {
+          console.warn('NEXT_PUBLIC_VAPI_API_KEY is missing');
+          return;
+        }
+
+        const VapiModule = await import('@vapi-ai/web');
+        const Vapi = VapiModule.default;
+
+        const instance = new Vapi(key);
+
+        if (!mounted) return;
+
+        vapiRef.current = instance;
+        setVoiceReady(true);
+
+        instance.on('call-start', () => {
+          console.log('Vapi call started');
+          setCallStatus('Call started');
+        });
+
+        instance.on('call-end', () => {
+          console.log('Vapi call ended');
+          setCallStatus('Call ended');
+        });
+
+        instance.on('message', (message: unknown) => {
+          console.log('Vapi message:', message);
+        });
+
+        instance.on('error', (error: unknown) => {
+          console.error('Vapi error:', error);
+          setCallStatus('Call error');
+          alert('Voice call failed. Check browser console.');
+        });
+      } catch (error) {
+        console.error('Failed to initialize Vapi:', error);
+        setVoiceReady(false);
+      }
     };
 
-    const onCallEnd = () => {
-      console.log('Vapi call ended');
-      setCallStatus('Call ended');
-    };
-
-    const onMessage = (message: unknown) => {
-      console.log('Vapi message:', message);
-    };
-
-    const onError = (error: unknown) => {
-      console.error('Vapi error:', error);
-      setCallStatus('Call error');
-      alert('Voice call failed. Check console.');
-    };
-
-    vapi.on('call-start', onCallStart);
-    vapi.on('call-end', onCallEnd);
-    vapi.on('message', onMessage);
-    vapi.on('error', onError);
+    initVapi();
 
     return () => {
-      vapi.off('call-start', onCallStart);
-      vapi.off('call-end', onCallEnd);
-      vapi.off('message', onMessage);
-      vapi.off('error', onError);
+      mounted = false;
     };
-  }, [vapi]);
+  }, []);
 
   const selectedProviderName =
     providers.find((p) => p.id === selectedProvider)?.name || '';
 
   const startVoiceAssistant = async () => {
-    if (!vapi) {
-      alert('Vapi key is missing in .env.local');
+    if (!vapiRef.current) {
+      alert('Voice assistant is not ready yet.');
       return;
     }
 
     try {
       setCallStatus('Starting call...');
 
-      await vapi.start('eb734837-de2b-4072-b054-5d341192f462', {
+      await vapiRef.current.start('eb734837-de2b-4072-b054-5d341192f462', {
         variableValues: {
           patient_name: `${firstName} ${lastName}`.trim() || 'Patient',
           email: email || 'not provided',
           reason_for_visit: reason || 'not provided',
           matched_provider: selectedProviderName || 'not selected',
-          previous_chat_summary: `Patient name: ${firstName} ${lastName}. Reason: ${reason}. Selected provider: ${selectedProviderName}.`,
+          previous_chat_summary: `Patient name: ${firstName} ${lastName}. Reason for visit: ${reason}. Selected provider: ${selectedProviderName}.`,
         },
       });
     } catch (error) {
@@ -126,10 +140,10 @@ export default function Home() {
   };
 
   const stopVoiceAssistant = async () => {
-    if (!vapi) return;
+    if (!vapiRef.current) return;
 
     try {
-      await vapi.stop();
+      await vapiRef.current.stop();
       setCallStatus('Call stopped');
     } catch (error) {
       console.error('Error stopping Vapi:', error);
@@ -139,15 +153,17 @@ export default function Home() {
   return (
     <main style={{ padding: '40px', fontFamily: 'Arial' }}>
       <h1>Clinic AI</h1>
-      <p>Test page is loading.</p>
+      <p>Appointment booking demo</p>
 
       <div style={{ marginBottom: '20px' }}>
         <button
           onClick={startVoiceAssistant}
+          disabled={!voiceReady}
           style={{
             padding: '10px 16px',
             marginRight: '10px',
-            cursor: 'pointer',
+            cursor: voiceReady ? 'pointer' : 'not-allowed',
+            opacity: voiceReady ? 1 : 0.6,
           }}
         >
           🎤 Talk to Assistant
@@ -290,7 +306,8 @@ export default function Home() {
 
                       if (!emailRes.ok) {
                         alert(
-                          'Appointment booked, but email could only be sent to your verified test email in Resend.'
+                          emailData.error ||
+                            'Appointment booked, but email could only be sent to your verified test email in Resend.'
                         );
                       } else {
                         alert('Appointment booked! Email sent.');
