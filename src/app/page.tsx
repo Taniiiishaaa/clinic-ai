@@ -30,13 +30,21 @@ export default function Home() {
 
   useEffect(() => {
     fetch('/api/providers')
-      .then((res) => res.json())
-      .then((data) => {
-        console.log('providers:', data);
-        setProviders(data);
+      .then(async (res) => {
+        const data = await res.json();
+        console.log('providers response:', data);
+
+        if (!res.ok) {
+          console.error('providers API error:', data);
+          setProviders([]);
+          return;
+        }
+
+        setProviders(Array.isArray(data) ? data : []);
       })
       .catch((error) => {
         console.error('providers fetch error:', error);
+        setProviders([]);
       });
   }, []);
 
@@ -47,13 +55,21 @@ export default function Home() {
     }
 
     fetch(`/api/slots?providerId=${selectedProvider}`)
-      .then((res) => res.json())
-      .then((data) => {
-        console.log('slots:', data);
-        setSlots(data);
+      .then(async (res) => {
+        const data = await res.json();
+        console.log('slots response:', data);
+
+        if (!res.ok) {
+          console.error('slots API error:', data);
+          setSlots([]);
+          return;
+        }
+
+        setSlots(Array.isArray(data) ? data : []);
       })
       .catch((error) => {
         console.error('slots fetch error:', error);
+        setSlots([]);
       });
   }, [selectedProvider]);
 
@@ -71,7 +87,6 @@ export default function Home() {
 
         const VapiModule = await import('@vapi-ai/web');
         const Vapi = VapiModule.default;
-
         const instance = new Vapi(key);
 
         if (!mounted) return;
@@ -79,24 +94,14 @@ export default function Home() {
         vapiRef.current = instance;
         setVoiceReady(true);
 
-        instance.on('call-start', () => {
-          console.log('Vapi call started');
-          setCallStatus('Call started');
-        });
-
-        instance.on('call-end', () => {
-          console.log('Vapi call ended');
-          setCallStatus('Call ended');
-        });
-
-        instance.on('message', (message: unknown) => {
-          console.log('Vapi message:', message);
-        });
-
+        instance.on('call-start', () => setCallStatus('Call started'));
+        instance.on('call-end', () => setCallStatus('Call ended'));
+        instance.on('message', (message: unknown) =>
+          console.log('Vapi message:', message)
+        );
         instance.on('error', (error: unknown) => {
           console.error('Vapi error:', error);
           setCallStatus('Call error');
-          alert('Voice call failed. Check browser console.');
         });
       } catch (error) {
         console.error('Failed to initialize Vapi:', error);
@@ -111,8 +116,9 @@ export default function Home() {
     };
   }, []);
 
-  const selectedProviderName =
-    providers.find((p) => p.id === selectedProvider)?.name || '';
+  const selectedProviderName = Array.isArray(providers)
+    ? providers.find((p) => p.id === selectedProvider)?.name || ''
+    : '';
 
   const startVoiceAssistant = async () => {
     if (!vapiRef.current) {
@@ -171,10 +177,7 @@ export default function Home() {
 
         <button
           onClick={stopVoiceAssistant}
-          style={{
-            padding: '10px 16px',
-            cursor: 'pointer',
-          }}
+          style={{ padding: '10px 16px', cursor: 'pointer' }}
         >
           Stop Call
         </button>
@@ -199,21 +202,18 @@ export default function Home() {
           onChange={(e) => setFirstName(e.target.value)}
           style={{ padding: '8px' }}
         />
-
         <input
           placeholder="Last Name"
           value={lastName}
           onChange={(e) => setLastName(e.target.value)}
           style={{ padding: '8px' }}
         />
-
         <input
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           style={{ padding: '8px' }}
         />
-
         <input
           placeholder="Reason"
           value={reason}
@@ -229,11 +229,12 @@ export default function Home() {
         style={{ marginLeft: '10px', padding: '8px' }}
       >
         <option value="">-- Select Doctor --</option>
-        {providers.map((provider) => (
-          <option key={provider.id} value={provider.id}>
-            {provider.name} ({provider.specialty})
-          </option>
-        ))}
+        {Array.isArray(providers) &&
+          providers.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.name} ({provider.specialty})
+            </option>
+          ))}
       </select>
 
       <div style={{ marginTop: '30px' }}>
@@ -245,89 +246,6 @@ export default function Home() {
             {slots.map((slot) => (
               <li key={slot.id} style={{ marginBottom: '10px' }}>
                 {new Date(slot.slot_time).toLocaleString()}
-
-                <button
-                  style={{ marginLeft: '10px', padding: '5px 10px' }}
-                  onClick={async () => {
-                    if (!firstName || !lastName || !email || !reason) {
-                      alert('Please fill all fields');
-                      return;
-                    }
-
-                    try {
-                      const bookRes = await fetch('/api/book', {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                          firstName,
-                          lastName,
-                          email,
-                          providerId: selectedProvider,
-                          slotId: slot.id,
-                          reason,
-                        }),
-                      });
-
-                      const bookText = await bookRes.text();
-                      console.log('raw booking response:', bookText);
-
-                      let bookData: any = {};
-                      if (bookText) {
-                        bookData = JSON.parse(bookText);
-                      }
-
-                      if (!bookRes.ok) {
-                        alert(bookData.error || 'Booking failed');
-                        return;
-                      }
-
-                      const emailRes = await fetch('/api/send-email', {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                          email,
-                          name: `${firstName} ${lastName}`,
-                          provider: selectedProviderName,
-                          time: new Date(slot.slot_time).toLocaleString(),
-                        }),
-                      });
-
-                      const emailText = await emailRes.text();
-                      console.log('raw email response:', emailText);
-
-                      let emailData: any = {};
-                      if (emailText) {
-                        emailData = JSON.parse(emailText);
-                      }
-
-                      if (!emailRes.ok) {
-                        alert(
-                          emailData.error ||
-                            'Appointment booked, but email could only be sent to your verified test email in Resend.'
-                        );
-                      } else {
-                        alert('Appointment booked! Email sent.');
-                      }
-
-                      const updatedSlotsRes = await fetch(
-                        `/api/slots?providerId=${selectedProvider}`
-                      );
-                      const updatedSlots = await updatedSlotsRes.json();
-                      setSlots(updatedSlots);
-                    } catch (error) {
-                      console.error('Booking flow error:', error);
-                      alert(
-                        'Something went wrong. Check browser console and terminal.'
-                      );
-                    }
-                  }}
-                >
-                  Book
-                </button>
               </li>
             ))}
           </ul>
