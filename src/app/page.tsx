@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import Vapi from '@vapi-ai/web';
 
 type Provider = {
   id: string;
@@ -24,27 +25,22 @@ export default function Home() {
   const [reason, setReason] = useState('');
 
   const [callStatus, setCallStatus] = useState('Idle');
-  const [voiceReady, setVoiceReady] = useState(false);
 
-  const vapiRef = useRef<any>(null);
+  const vapi = useMemo(() => {
+    const key = process.env.NEXT_PUBLIC_VAPI_API_KEY;
+    if (!key) return null;
+    return new Vapi(key);
+  }, []);
 
   useEffect(() => {
     fetch('/api/providers')
-      .then(async (res) => {
-        const data = await res.json();
-        console.log('providers response:', data);
-
-        if (!res.ok) {
-          console.error('providers API error:', data);
-          setProviders([]);
-          return;
-        }
-
-        setProviders(Array.isArray(data) ? data : []);
+      .then((res) => res.json())
+      .then((data) => {
+        console.log('providers:', data);
+        setProviders(data);
       })
       .catch((error) => {
         console.error('providers fetch error:', error);
-        setProviders([]);
       });
   }, []);
 
@@ -55,87 +51,71 @@ export default function Home() {
     }
 
     fetch(`/api/slots?providerId=${selectedProvider}`)
-      .then(async (res) => {
-        const data = await res.json();
-        console.log('slots response:', data);
-
-        if (!res.ok) {
-          console.error('slots API error:', data);
-          setSlots([]);
-          return;
-        }
-
-        setSlots(Array.isArray(data) ? data : []);
+      .then((res) => res.json())
+      .then((data) => {
+        console.log('slots:', data);
+        setSlots(data);
       })
       .catch((error) => {
         console.error('slots fetch error:', error);
-        setSlots([]);
       });
   }, [selectedProvider]);
 
   useEffect(() => {
-    let mounted = true;
+    if (!vapi) return;
 
-    const initVapi = async () => {
-      try {
-        const key = process.env.NEXT_PUBLIC_VAPI_API_KEY;
-
-        if (!key) {
-          console.warn('NEXT_PUBLIC_VAPI_API_KEY is missing');
-          return;
-        }
-
-        const VapiModule = await import('@vapi-ai/web');
-        const Vapi = VapiModule.default;
-        const instance = new Vapi(key);
-
-        if (!mounted) return;
-
-        vapiRef.current = instance;
-        setVoiceReady(true);
-
-        instance.on('call-start', () => setCallStatus('Call started'));
-        instance.on('call-end', () => setCallStatus('Call ended'));
-        instance.on('message', (message: unknown) =>
-          console.log('Vapi message:', message)
-        );
-        instance.on('error', (error: unknown) => {
-          console.error('Vapi error:', error);
-          setCallStatus('Call error');
-        });
-      } catch (error) {
-        console.error('Failed to initialize Vapi:', error);
-        setVoiceReady(false);
-      }
+    const onCallStart = () => {
+      console.log('Vapi call started');
+      setCallStatus('Call started');
     };
 
-    initVapi();
+    const onCallEnd = () => {
+      console.log('Vapi call ended');
+      setCallStatus('Call ended');
+    };
+
+    const onMessage = (message: unknown) => {
+      console.log('Vapi message:', message);
+    };
+
+    const onError = (error: unknown) => {
+      console.error('Vapi error:', error);
+      setCallStatus('Call error');
+      alert('Voice call failed. Check console.');
+    };
+
+    vapi.on('call-start', onCallStart);
+    vapi.on('call-end', onCallEnd);
+    vapi.on('message', onMessage);
+    vapi.on('error', onError);
 
     return () => {
-      mounted = false;
+      vapi.off('call-start', onCallStart);
+      vapi.off('call-end', onCallEnd);
+      vapi.off('message', onMessage);
+      vapi.off('error', onError);
     };
-  }, []);
+  }, [vapi]);
 
-  const selectedProviderName = Array.isArray(providers)
-    ? providers.find((p) => p.id === selectedProvider)?.name || ''
-    : '';
+  const selectedProviderName =
+    providers.find((p) => p.id === selectedProvider)?.name || '';
 
   const startVoiceAssistant = async () => {
-    if (!vapiRef.current) {
-      alert('Voice assistant is not ready yet.');
+    if (!vapi) {
+      alert('Vapi key is missing in .env.local');
       return;
     }
 
     try {
       setCallStatus('Starting call...');
 
-      await vapiRef.current.start('eb734837-de2b-4072-b054-5d341192f462', {
+      await vapi.start('eb734837-de2b-4072-b054-5d341192f462', {
         variableValues: {
           patient_name: `${firstName} ${lastName}`.trim() || 'Patient',
           email: email || 'not provided',
           reason_for_visit: reason || 'not provided',
           matched_provider: selectedProviderName || 'not selected',
-          previous_chat_summary: `Patient name: ${firstName} ${lastName}. Reason for visit: ${reason}. Selected provider: ${selectedProviderName}.`,
+          previous_chat_summary: `Patient name: ${firstName} ${lastName}. Reason: ${reason}. Selected provider: ${selectedProviderName}.`,
         },
       });
     } catch (error) {
@@ -146,10 +126,10 @@ export default function Home() {
   };
 
   const stopVoiceAssistant = async () => {
-    if (!vapiRef.current) return;
+    if (!vapi) return;
 
     try {
-      await vapiRef.current.stop();
+      await vapi.stop();
       setCallStatus('Call stopped');
     } catch (error) {
       console.error('Error stopping Vapi:', error);
@@ -159,17 +139,15 @@ export default function Home() {
   return (
     <main style={{ padding: '40px', fontFamily: 'Arial' }}>
       <h1>Clinic AI</h1>
-      <p>Appointment booking demo</p>
+      <p>Test page is loading.</p>
 
       <div style={{ marginBottom: '20px' }}>
         <button
           onClick={startVoiceAssistant}
-          disabled={!voiceReady}
           style={{
             padding: '10px 16px',
             marginRight: '10px',
-            cursor: voiceReady ? 'pointer' : 'not-allowed',
-            opacity: voiceReady ? 1 : 0.6,
+            cursor: 'pointer',
           }}
         >
           🎤 Talk to Assistant
@@ -177,7 +155,10 @@ export default function Home() {
 
         <button
           onClick={stopVoiceAssistant}
-          style={{ padding: '10px 16px', cursor: 'pointer' }}
+          style={{
+            padding: '10px 16px',
+            cursor: 'pointer',
+          }}
         >
           Stop Call
         </button>
@@ -202,18 +183,21 @@ export default function Home() {
           onChange={(e) => setFirstName(e.target.value)}
           style={{ padding: '8px' }}
         />
+
         <input
           placeholder="Last Name"
           value={lastName}
           onChange={(e) => setLastName(e.target.value)}
           style={{ padding: '8px' }}
         />
+
         <input
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           style={{ padding: '8px' }}
         />
+
         <input
           placeholder="Reason"
           value={reason}
@@ -229,12 +213,11 @@ export default function Home() {
         style={{ marginLeft: '10px', padding: '8px' }}
       >
         <option value="">-- Select Doctor --</option>
-        {Array.isArray(providers) &&
-          providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.name} ({provider.specialty})
-            </option>
-          ))}
+        {providers.map((provider) => (
+          <option key={provider.id} value={provider.id}>
+            {provider.name} ({provider.specialty})
+          </option>
+        ))}
       </select>
 
       <div style={{ marginTop: '30px' }}>
@@ -246,6 +229,88 @@ export default function Home() {
             {slots.map((slot) => (
               <li key={slot.id} style={{ marginBottom: '10px' }}>
                 {new Date(slot.slot_time).toLocaleString()}
+
+                <button
+                  style={{ marginLeft: '10px', padding: '5px 10px' }}
+                  onClick={async () => {
+                    if (!firstName || !lastName || !email || !reason) {
+                      alert('Please fill all fields');
+                      return;
+                    }
+
+                    try {
+                      const bookRes = await fetch('/api/book', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          firstName,
+                          lastName,
+                          email,
+                          providerId: selectedProvider,
+                          slotId: slot.id,
+                          reason,
+                        }),
+                      });
+
+                      const bookText = await bookRes.text();
+                      console.log('raw booking response:', bookText);
+
+                      let bookData: any = {};
+                      if (bookText) {
+                        bookData = JSON.parse(bookText);
+                      }
+
+                      if (!bookRes.ok) {
+                        alert(bookData.error || 'Booking failed');
+                        return;
+                      }
+
+                      const emailRes = await fetch('/api/send-email', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          email,
+                          name: `${firstName} ${lastName}`,
+                          provider: selectedProviderName,
+                          time: new Date(slot.slot_time).toLocaleString(),
+                        }),
+                      });
+
+                      const emailText = await emailRes.text();
+                      console.log('raw email response:', emailText);
+
+                      let emailData: any = {};
+                      if (emailText) {
+                        emailData = JSON.parse(emailText);
+                      }
+
+                      if (!emailRes.ok) {
+                        alert(
+                          'Appointment booked, but email could only be sent to your verified test email in Resend.'
+                        );
+                      } else {
+                        alert('Appointment booked! Email sent.');
+                      }
+
+                      const updatedSlotsRes = await fetch(
+                        `/api/slots?providerId=${selectedProvider}`
+                      );
+                      const updatedSlots = await updatedSlotsRes.json();
+                      setSlots(updatedSlots);
+                    } catch (error) {
+                      console.error('Booking flow error:', error);
+                      alert(
+                        'Something went wrong. Check browser console and terminal.'
+                      );
+                    }
+                  }}
+                >
+                  Book
+                </button>
               </li>
             ))}
           </ul>
