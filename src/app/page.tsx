@@ -37,7 +37,7 @@ export default function Home() {
       .then((res) => res.json())
       .then((data) => {
         console.log('providers:', data);
-        setProviders(data);
+        setProviders(Array.isArray(data) ? data : []);
       })
       .catch((error) => {
         console.error('providers fetch error:', error);
@@ -66,7 +66,7 @@ export default function Home() {
 
     const onCallStart = () => {
       console.log('Vapi call started');
-      setCallStatus('Call started');
+      setCallStatus('🎤 Call in progress...');
     };
 
     const onCallEnd = () => {
@@ -74,8 +74,42 @@ export default function Home() {
       setCallStatus('Call ended');
     };
 
-    const onMessage = (message: unknown) => {
+    const onMessage = (message: any) => {
       console.log('Vapi message:', message);
+
+      // Auto-fill form when assistant calls book_appointment tool
+      if (message.type === 'tool-calls') {
+        const toolCall = message.toolCallList?.[0];
+        if (toolCall?.function?.name === 'book_appointment') {
+          const args = toolCall.function.arguments;
+          if (args.firstName) setFirstName(args.firstName);
+          if (args.lastName) setLastName(args.lastName);
+          if (args.email) setEmail(args.email);
+          if (args.reason) setReason(args.reason);
+          if (args.providerId) setSelectedProvider(args.providerId);
+        }
+      }
+
+      // Also catch function-call format
+      if (message.type === 'function-call') {
+        const { functionCall } = message;
+        if (functionCall?.name === 'book_appointment') {
+          const params = functionCall.parameters || {};
+          if (params.firstName) setFirstName(params.firstName);
+          if (params.lastName) setLastName(params.lastName);
+          if (params.email) setEmail(params.email);
+          if (params.reason) setReason(params.reason);
+          if (params.providerId) setSelectedProvider(params.providerId);
+        }
+      }
+
+      // Extract email from assistant transcript in real time
+      if (message.type === 'transcript' && message.role === 'assistant') {
+        const emailMatch = message.transcript?.match(
+          /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
+        );
+        if (emailMatch) setEmail(emailMatch[0]);
+      }
     };
 
     const onError = (error: unknown) => {
@@ -139,7 +173,6 @@ export default function Home() {
   return (
     <main style={{ padding: '40px', fontFamily: 'Arial' }}>
       <h1>Clinic AI</h1>
-      <p>Test page is loading.</p>
 
       <div style={{ marginBottom: '20px' }}>
         <button
@@ -148,6 +181,11 @@ export default function Home() {
             padding: '10px 16px',
             marginRight: '10px',
             cursor: 'pointer',
+            backgroundColor: '#4CAF50',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            fontSize: '16px',
           }}
         >
           🎤 Talk to Assistant
@@ -158,9 +196,14 @@ export default function Home() {
           style={{
             padding: '10px 16px',
             cursor: 'pointer',
+            backgroundColor: '#f44336',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            fontSize: '16px',
           }}
         >
-          Stop Call
+          ⏹ Stop Call
         </button>
 
         <p style={{ marginTop: '10px' }}>
@@ -169,6 +212,9 @@ export default function Home() {
       </div>
 
       <h2>Patient Info</h2>
+      <p style={{ color: '#888', fontSize: '13px', marginBottom: '10px' }}>
+        Fields auto-fill as the assistant collects your information.
+      </p>
       <div
         style={{
           marginBottom: '20px',
@@ -181,36 +227,36 @@ export default function Home() {
           placeholder="First Name"
           value={firstName}
           onChange={(e) => setFirstName(e.target.value)}
-          style={{ padding: '8px' }}
+          style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '150px' }}
         />
 
         <input
           placeholder="Last Name"
           value={lastName}
           onChange={(e) => setLastName(e.target.value)}
-          style={{ padding: '8px' }}
+          style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '150px' }}
         />
 
         <input
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          style={{ padding: '8px' }}
+          style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '200px' }}
         />
 
         <input
-          placeholder="Reason"
+          placeholder="Reason for visit"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          style={{ padding: '8px' }}
+          style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '200px' }}
         />
       </div>
 
-      <label>Select Provider: </label>
+      <label><strong>Select Provider: </strong></label>
       <select
         value={selectedProvider}
         onChange={(e) => setSelectedProvider(e.target.value)}
-        style={{ marginLeft: '10px', padding: '8px' }}
+        style={{ marginLeft: '10px', padding: '8px', borderRadius: '4px' }}
       >
         <option value="">-- Select Doctor --</option>
         {providers.map((provider) => (
@@ -223,7 +269,7 @@ export default function Home() {
       <div style={{ marginTop: '30px' }}>
         <h2>Available Slots</h2>
         {slots.length === 0 ? (
-          <p>No slots yet.</p>
+          <p>No slots yet. Select a provider to see availability.</p>
         ) : (
           <ul>
             {slots.map((slot) => (
@@ -231,19 +277,25 @@ export default function Home() {
                 {new Date(slot.slot_time).toLocaleString()}
 
                 <button
-                  style={{ marginLeft: '10px', padding: '5px 10px' }}
+                  style={{
+                    marginLeft: '10px',
+                    padding: '5px 10px',
+                    backgroundColor: '#2196F3',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                  }}
                   onClick={async () => {
                     if (!firstName || !lastName || !email || !reason) {
-                      alert('Please fill all fields');
+                      alert('Please fill all patient fields first');
                       return;
                     }
 
                     try {
                       const bookRes = await fetch('/api/book', {
                         method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           firstName,
                           lastName,
@@ -258,9 +310,7 @@ export default function Home() {
                       console.log('raw booking response:', bookText);
 
                       let bookData: any = {};
-                      if (bookText) {
-                        bookData = JSON.parse(bookText);
-                      }
+                      if (bookText) bookData = JSON.parse(bookText);
 
                       if (!bookRes.ok) {
                         alert(bookData.error || 'Booking failed');
@@ -269,9 +319,7 @@ export default function Home() {
 
                       const emailRes = await fetch('/api/send-email', {
                         method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           email,
                           name: `${firstName} ${lastName}`,
@@ -284,16 +332,12 @@ export default function Home() {
                       console.log('raw email response:', emailText);
 
                       let emailData: any = {};
-                      if (emailText) {
-                        emailData = JSON.parse(emailText);
-                      }
+                      if (emailText) emailData = JSON.parse(emailText);
 
                       if (!emailRes.ok) {
-                        alert(
-                          'Appointment booked, but email could only be sent to your verified test email in Resend.'
-                        );
+                        alert('Appointment booked, but email could only be sent to your verified test email in Resend.');
                       } else {
-                        alert('Appointment booked! Email sent.');
+                        alert('✅ Appointment booked! Confirmation email sent.');
                       }
 
                       const updatedSlotsRes = await fetch(
@@ -303,9 +347,7 @@ export default function Home() {
                       setSlots(updatedSlots);
                     } catch (error) {
                       console.error('Booking flow error:', error);
-                      alert(
-                        'Something went wrong. Check browser console and terminal.'
-                      );
+                      alert('Something went wrong. Check browser console and terminal.');
                     }
                   }}
                 >
