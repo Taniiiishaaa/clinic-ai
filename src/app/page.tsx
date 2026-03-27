@@ -74,43 +74,33 @@ export default function Home() {
       setCallStatus('Call ended');
     };
 
-    const onMessage = (message: any) => {
-      console.log('Vapi message:', message);
+   const onMessage = (message: any) => {
+  console.log('Vapi message:', message);
 
-      // Auto-fill form when assistant calls book_appointment tool
-      if (message.type === 'tool-calls') {
-        const toolCall = message.toolCallList?.[0];
-        if (toolCall?.function?.name === 'book_appointment') {
-          const args = toolCall.function.arguments;
-          if (args.firstName) setFirstName(args.firstName);
-          if (args.lastName) setLastName(args.lastName);
-          if (args.email) setEmail(args.email);
-          if (args.reason) setReason(args.reason);
-          if (args.providerId) setSelectedProvider(args.providerId);
-        }
-      }
+  if (message.type === 'tool-calls') {
+    const list = message.toolCallList || message.toolCalls || [];
+    list.forEach((toolCall: any) => {
+      const name = toolCall?.function?.name;
+      const args = toolCall?.function?.arguments || {};
+      console.log('Tool call name:', name, 'args:', args);
 
-      // Also catch function-call format
-      if (message.type === 'function-call') {
-        const { functionCall } = message;
-        if (functionCall?.name === 'book_appointment') {
-          const params = functionCall.parameters || {};
-          if (params.firstName) setFirstName(params.firstName);
-          if (params.lastName) setLastName(params.lastName);
-          if (params.email) setEmail(params.email);
-          if (params.reason) setReason(params.reason);
-          if (params.providerId) setSelectedProvider(params.providerId);
-        }
+      if (name === 'book_appointment') {
+        if (args.firstName) setFirstName(args.firstName);
+        if (args.lastName) setLastName(args.lastName);
+        if (args.email) setEmail(args.email);
+        if (args.reason) setReason(args.reason);
+        if (args.providerId) setSelectedProvider(args.providerId);
       }
+    });
+  }
 
-      // Extract email from assistant transcript in real time
-      if (message.type === 'transcript' && message.role === 'assistant') {
-        const emailMatch = message.transcript?.match(
-          /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
-        );
-        if (emailMatch) setEmail(emailMatch[0]);
-      }
-    };
+  if (message.type === 'transcript' && message.role === 'assistant') {
+    const emailMatch = message.transcript?.match(
+      /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
+    );
+    if (emailMatch) setEmail(emailMatch[0]);
+  }
+};
 
     const onError = (error: unknown) => {
       console.error('Vapi error:', error);
