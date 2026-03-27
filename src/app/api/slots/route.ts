@@ -22,3 +22,29 @@ export async function GET(req: Request) {
 
   return NextResponse.json(data);
 }
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const providerId = body.providerId;
+
+    if (!providerId) {
+      return NextResponse.json({ error: 'providerId required' }, { status: 400 });
+    }
+
+    const { data, error } = await supabase
+      .from('availability_slots')
+      .select('*')
+      .eq('provider_id', providerId)
+      .eq('is_booked', false)
+      .order('slot_time', { ascending: true });
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json(data);
+  } catch (error) {
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+  }
+}
